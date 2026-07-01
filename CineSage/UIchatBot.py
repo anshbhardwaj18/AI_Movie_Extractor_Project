@@ -2,21 +2,59 @@ import streamlit as st
 from streamlit_lottie import st_lottie
 import requests
 from dotenv import load_dotenv
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_mistralai import ChatMistralAI
+from langchain_core.output_parsers import PydanticOutputParser
 
-# ---------------- CONFIG ----------------
+from pydantic import BaseModel
+from typing import List, Optional
+
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
-    page_title="Movie Extractor",
+    page_title="Movie Information Extractor",
     page_icon="🎬",
     layout="wide"
 )
 
+# ---------------- ENV ----------------
 load_dotenv()
 
+# ---------------- MODEL ----------------
 model = ChatMistralAI(
     model="mistral-small-2506"
 )
+
+# ---------------- PYDANTIC MODEL ----------------
+class Movie(BaseModel):
+    title: str
+    release_year: Optional[int]
+    genre: List[str]
+    director: Optional[str]
+    cast: List[str]
+    rating: Optional[float]
+    summary: str
+
+
+parser = PydanticOutputParser(
+    pydantic_object=Movie
+)
+
+# ---------------- PROMPT ----------------
+prompt = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
+        Extract movie information from the given paragraph.
+
+        {format_instructions}
+        """
+    ),
+    (
+        "human",
+        "{paragraph}"
+    )
+])
 
 # ---------------- CSS ----------------
 st.markdown("""
@@ -87,18 +125,19 @@ st.markdown("""
     margin-bottom:30px;
 }
 
-# .stTextArea textarea {
-#     border-radius:20px !important;
-#     background:rgba(255,255,255,0.08) !important;
-#     color:white !important;
-#     border:1px solid rgba(255,255,255,0.2) !important;
-# }
 .stTextArea label {
-    font-size: 24px !important;
-    font-weight: 700 !important;
-    color: white !important;
+    font-size:28px !important;
+    font-weight:700 !important;
+    color:white !important;
 }
-        
+
+.stTextArea textarea {
+    border-radius:20px !important;
+    background:rgba(255,255,255,0.08) !important;
+    color:white !important;
+    border:1px solid rgba(255,255,255,0.2) !important;
+}
+
 .stButton>button {
     width:100%;
     height:65px;
@@ -123,12 +162,13 @@ st.markdown("""
 }
 
 .result-card {
-    background:rgba(255,255,255,0.1);
-    border-radius:25px;
-    padding:30px;
-    color:white;
-    animation:fadeIn 1s ease;
-    margin-top:30px;
+    background: rgba(255,255,255,0.12);
+    backdrop-filter: blur(20px);
+    border-radius: 25px;
+    padding: 35px;
+    color: white;
+    margin-top: 30px;
+    animation: fadeIn 1s ease;
 }
 
 @keyframes fadeIn {
@@ -152,17 +192,19 @@ def load_lottie(url):
         return None
     return r.json()
 
+
 movie_animation = load_lottie(
     "https://assets9.lottiefiles.com/packages/lf20_j1adxtyb.json"
 )
 
-st_lottie(
-    movie_animation,
-    height=250,
-    key="movie"
-)
+if movie_animation:
+    st_lottie(
+        movie_animation,
+        height=250,
+        key="movie"
+    )
 
-# ---------------- TITLE ----------------
+# ---------------- HEADER ----------------
 st.markdown(
     """
     <div class='title'>🎬 Movie Information Extractor</div>
@@ -172,40 +214,6 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
-
-# ---------------- PROMPT ----------------
-prompt = ChatPromptTemplate.from_messages([
-    (
-        "system",
-        """
-        You are an expert movie information extractor Assistant.
-
-        Analyze the given movie paragraph and extract:
-
-        - Movie Name
-        - IMDB Rating
-        - Genre
-        - Director
-        - Cast
-        - Main Characters
-        - Plot Summary
-        - Themes
-        - Keywords
-        - Notable Features
-        - Quick Summary (2-3 lines)
-
-        If information is unavailable, mention 'Not Available'.
-        """
-    ),
-    (
-        "human",
-        """
-        Extract information from this paragraph:
-
-        {paragraph}
-        """
-    )
-])
 
 # ---------------- INPUT CARD ----------------
 st.markdown("<div class='main-card'>", unsafe_allow_html=True)
@@ -220,23 +228,53 @@ extract = st.button("🚀 Extract Information")
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# ---------------- RESULT ----------------
+# ---------------- EXTRACTION ----------------
 if extract:
+
     if paragraph.strip() == "":
         st.warning("Please enter a movie description.")
+
     else:
         with st.spinner("Analyzing movie..."):
+
             final_prompt = prompt.invoke(
-                {"paragraph": paragraph}
+                {
+                    "paragraph": paragraph,
+                    "format_instructions": parser.get_format_instructions()
+                }
             )
 
             response = model.invoke(final_prompt)
 
-        st.markdown(
-            f"""
-            <div class='result-card'>
-            {response.content.replace(chr(10), '<br>')}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+            # Original LLM response
+            raw_output = response.content
+
+            # Show Raw Model Output
+            st.subheader("🤖 Raw Model Output")
+            st.code(raw_output, language="json")
+
+            try:
+                # Remove markdown json block if present
+                cleaned_output = (
+                    raw_output
+                    .replace("```json", "")
+                    .replace("```", "")
+                    .strip()
+                )
+
+                # Parse response
+                movie = parser.parse(cleaned_output)
+
+                # Structured Output
+                st.subheader("📊 Structured Output")
+                st.write(f"🎬 **{movie.title}**")
+                st.write(f"📅 **Release Year:** {movie.release_year or 'Not Available'}")
+                st.write(f"🎭 **Genre:** {', '.join(movie.genre) if movie.genre else 'Not Available'}")
+                st.write(f"🎬 **Director:** {movie.director or 'Not Available'}")
+                st.write(f"⭐ **Rating:** {movie.rating if movie.rating is not None else 'Not Available'}")
+                st.write(f"👥 **Cast:** {', '.join(movie.cast) if movie.cast else 'Not Available'}")
+                st.write(f"📝 **Summary:** {movie.summary}")
+
+            except Exception as e:
+                st.error(f"Could not parse the model output.\n{e}")
+                st.write(raw_output)
